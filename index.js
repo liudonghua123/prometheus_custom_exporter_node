@@ -1,25 +1,28 @@
 /**
- * Prometheus Custom Exporter
- * 
+ * Prometheus Custom Exporter with Dynamic Metrics Refresh
+ *
  * This script dynamically loads custom Prometheus metrics from the `metrics` directory,
- * watches for changes, and serves the metrics via an HTTP server.
+ * watches for changes, and ensures metrics are refreshed on every request to `/metrics`.
  */
 
-import { createServer } from 'http'; // Built-in HTTP server module
-import { readdir } from 'fs/promises'; // Promises API for reading directories
-import { watch } from 'fs/promises'; // Promises API for watching file system changes
-import { resolve, extname } from 'path'; // Utilities for handling file paths
-import { collectDefaultMetrics, Registry } from 'prom-client'; // Prometheus client library
-import { pathToFileURL } from 'url'; // Convert file paths to URL format
+import { createServer } from 'http';
+import { readdir } from 'fs/promises';
+import { watch } from 'fs/promises';
+import { resolve, extname } from 'path';
+import { collectDefaultMetrics, Registry } from 'prom-client';
+import { pathToFileURL } from 'url';
 
 // Configuration
-const PORT = process.env.PORT || 3000; // HTTP server port
-const serverStartTime = Date.now(); // Record server start time for uptime metric
-const metricsDir = resolve('./metrics'); // Directory containing custom metrics modules
+const PORT = process.env.PORT || 3000;
+const serverStartTime = Date.now();
+const metricsDir = resolve('./metrics');
 
 // Create a Prometheus registry and collect default system metrics
 const registry = new Registry();
 collectDefaultMetrics({ register: registry });
+
+// Map to store `process` functions from metrics modules
+const metricsProcessors = new Map();
 
 /**
  * Dynamically loads a metrics module.
@@ -35,7 +38,7 @@ async function loadMetricsModule(filePath) {
         const module = await import(moduleUrl); // Dynamically import the module
 
         if (typeof module.default === 'function') {
-            module.default(registry); // Call the module's default export with the registry
+            metricsProcessors.set(filePath, module.default); // Store the `process` function
             console.log(`Loaded metrics module: ${filePath}`);
         } else {
             console.error(`Invalid metrics module format: ${filePath}`);
@@ -84,6 +87,11 @@ watchMetricsDir().catch(console.error);
 createServer(async (req, res) => {
     if (req.url === '/metrics') {
         try {
+            // Evaluate all stored `process` functions to update metrics dynamically
+            for (const processor of metricsProcessors.values()) {
+                await processor(registry);
+            }
+
             const metrics = await registry.metrics(); // Fetch all registered metrics
             res.setHeader('Content-Type', registry.contentType); // Set content type for Prometheus
             res.end(metrics); // Respond with metrics data
