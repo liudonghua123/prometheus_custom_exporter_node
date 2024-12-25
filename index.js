@@ -17,9 +17,12 @@ const PORT = process.env.PORT || 3000;
 const serverStartTime = Date.now();
 const metricsDir = resolve('./metrics');
 
-// Create a Prometheus registry and collect default system metrics
-const registry = new Registry();
-collectDefaultMetrics({ register: registry });
+// Create a custom Prometheus registry
+const customRegistry = new Registry();
+
+// Optionally collect default system metrics in a separate registry (if needed)
+const defaultRegistry = new Registry();
+collectDefaultMetrics({ register: defaultRegistry });
 
 // Map to store `process` functions from metrics modules
 const metricsProcessors = new Map();
@@ -89,18 +92,30 @@ createServer(async (req, res) => {
         try {
             // Evaluate all stored `process` functions to update metrics dynamically
             for (const processor of metricsProcessors.values()) {
-                await processor(registry);
+                await processor(customRegistry);
             }
 
-            const metrics = await registry.metrics(); // Fetch all registered metrics
-            res.setHeader('Content-Type', registry.contentType); // Set content type for Prometheus
+            const metrics = await customRegistry.metrics(); // Fetch all custom registered metrics
+            res.setHeader('Content-Type', customRegistry.contentType); // Set content type for Prometheus
             res.end(metrics); // Respond with metrics data
         } catch (err) {
             console.error('Failed to fetch metrics:', err);
             res.statusCode = 500; // Internal Server Error
             res.end('Internal Server Error');
         }
-    } else {
+    }
+    else if (req.url === '/default-metrics') {
+      try {
+          const metrics = await defaultRegistry.metrics();
+          res.setHeader('Content-Type', defaultRegistry.contentType);
+          res.end(metrics);
+      } catch (err) {
+          console.error('Failed to fetch default metrics:', err);
+          res.statusCode = 500;
+          res.end('Internal Server Error');
+      }
+  }
+   else {
         res.end(`Server started at ${serverStartTime}, uptime: ${Date.now() - serverStartTime}ms`);
     }
 }).listen(PORT, () => {
