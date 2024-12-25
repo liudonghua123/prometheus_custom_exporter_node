@@ -9,5 +9,5 @@ export default function process(registry) {
     registry.registerMetric(gauge);
 
     // Set initial value or update dynamically
-    gauge.set(10); // Set to 10
+    gauge.set(Math.floor(Math.random() * 100)); // Set to a random value between 0 and 99
 }
