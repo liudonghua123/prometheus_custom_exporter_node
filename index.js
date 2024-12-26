@@ -1,3 +1,4 @@
+#!/usr/bin/env -S node --env-file=.env --experimental-strip-types --no-warnings=ExperimentalWarning
 /**
  * Prometheus Custom Exporter with Dynamic Metrics Refresh
  *
