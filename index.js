@@ -1,9 +1,9 @@
 #!/usr/bin/env -S node --env-file=.env --experimental-strip-types --no-warnings=ExperimentalWarning
 /**
- * Prometheus Custom Exporter with Dynamic Metrics Refresh
+ * Prometheus Custom Exporter with Cached Metrics
  *
- * This script dynamically loads custom Prometheus metrics from the `metrics` directory,
- * watches for changes, and ensures metrics are refreshed on every request to `/metrics`.
+ * Dynamically loads custom Prometheus metrics, watches for changes, and caches metrics
+ * for faster response times. Metrics are refreshed every 10 seconds.
  */
 
 import { createServer } from 'http';
@@ -27,6 +27,10 @@ collectDefaultMetrics({ register: defaultRegistry });
 
 // Map to store `process` functions from metrics modules
 const metricsProcessors = new Map();
+
+// Cache for metrics
+let cachedMetrics = '';
+let lastUpdated = 0;
 
 /**
  * Dynamically loads a metrics module.
@@ -83,41 +87,44 @@ async function watchMetricsDir() {
     }
 }
 
-// Start the process: load all metrics and set up directory watching
+/**
+ * Refreshes cached metrics.
+ */
+async function refreshMetricsCache() {
+    try {
+        for (const processor of metricsProcessors.values()) {
+            await processor(customRegistry); // Update custom metrics
+        }
+        cachedMetrics = await customRegistry.metrics(); // Cache the metrics
+        lastUpdated = Date.now();
+    } catch (err) {
+        console.error('Failed to refresh metrics cache:', err);
+    }
+}
+
+// Start the process: load all metrics, set up directory watching, and start cache refresh
 loadAllMetrics().catch(console.error);
 watchMetricsDir().catch(console.error);
+refreshMetricsCache(); // Initial cache refresh
+setInterval(refreshMetricsCache, 10000); // Refresh metrics cache every 10 seconds
 
 // Create and start the HTTP server
 createServer(async (req, res) => {
-    if (req.url === '/metrics') {
-        try {
-            // Evaluate all stored `process` functions to update metrics dynamically
-            for (const processor of metricsProcessors.values()) {
-                await processor(customRegistry);
-            }
-
-            const metrics = await customRegistry.metrics(); // Fetch all custom registered metrics
-            res.setHeader('Content-Type', customRegistry.contentType); // Set content type for Prometheus
-            res.end(metrics); // Respond with metrics data
-        } catch (err) {
-            console.error('Failed to fetch metrics:', err);
-            res.statusCode = 500; // Internal Server Error
-            res.end('Internal Server Error');
+    try {
+        if (req.url === '/metrics') {
+            res.setHeader('Content-Type', customRegistry.contentType);
+            res.end(cachedMetrics); // Serve cached metrics
+        } else if (req.url === '/default-metrics') {
+            const metrics = await defaultRegistry.metrics();
+            res.setHeader('Content-Type', defaultRegistry.contentType);
+            res.end(metrics);
+        } else {
+            res.end(`Server started at ${serverStartTime}, uptime: ${Date.now() - serverStartTime}ms`);
         }
-    }
-    else if (req.url === '/default-metrics') {
-      try {
-          const metrics = await defaultRegistry.metrics();
-          res.setHeader('Content-Type', defaultRegistry.contentType);
-          res.end(metrics);
-      } catch (err) {
-          console.error('Failed to fetch default metrics:', err);
-          res.statusCode = 500;
-          res.end('Internal Server Error');
-      }
-  }
-   else {
-        res.end(`Server started at ${serverStartTime}, uptime: ${Date.now() - serverStartTime}ms`);
+    } catch (err) {
+        console.error('Error processing request:', err);
+        res.statusCode = 500;
+        res.end('Internal Server Error');
     }
 }).listen(PORT, () => {
     console.log(`Prometheus exporter running at http://localhost:${PORT}/metrics`);
